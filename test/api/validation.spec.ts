@@ -187,4 +187,29 @@ describe('Validation and the résumé guard', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  describe('defensive null-coalescing paths', () => {
+    it('persists null, not undefined, when notes is omitted and linkedin is not provided', async () => {
+      const body = submissionBody({ candidate: uniqueCandidate({ linkedin: undefined }) });
+      delete body.notes;
+
+      const res = await submitCandidate(USERS.direct, body);
+
+      expect(res.status).toBe(200);
+      expect(res.body.submission.notes).toBeNull();
+      expect(res.body.candidate.linkedin).toBeNull();
+    });
+
+    it('accepts a screening answer whose text is an empty string', async () => {
+      const res = await submitCandidate(
+        USERS.direct,
+        submissionBody({ screeningAnswers: [{ type: 'QUESTION', answer: '' }] }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body.submission.filteredAnswers)).toEqual([
+        { type: 'QUESTION', answer: '' },
+      ]);
+    });
+  });
 });

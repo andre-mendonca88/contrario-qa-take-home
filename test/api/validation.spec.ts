@@ -190,8 +190,9 @@ describe('Validation and the résumé guard', () => {
 
   describe('defensive null-coalescing paths', () => {
     it('persists null, not undefined, when notes is omitted and linkedin is not provided', async () => {
+      // submissionBody() never sets `notes` unless an override supplies one,
+      // so this body already has no `notes` key — exactly the case under test.
       const body = submissionBody({ candidate: uniqueCandidate({ linkedin: undefined }) });
-      delete body.notes;
 
       const res = await submitCandidate(USERS.direct, body);
 

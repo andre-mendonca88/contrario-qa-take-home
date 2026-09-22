@@ -12,6 +12,9 @@ jobs:
       - run: npm run test:api          # fails the build if coverage < threshold
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Publish run summary
+        if: always()
+        run: node scripts/ci-summary.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:

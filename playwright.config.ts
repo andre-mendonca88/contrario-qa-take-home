@@ -16,7 +16,15 @@ export default defineConfig({
 
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  // CI gets inline PR annotations (github) and a machine-readable result
+  // (junit) for any reporting integration; local runs stay terse.
+  reporter: process.env.CI
+    ? [
+        ['github'],
+        ['junit', { outputFile: 'playwright-report/results.xml' }],
+        ['html', { open: 'never', outputFolder: 'playwright-report' }],
+      ]
+    : [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
 
   use: {
     baseURL: BASE_URL,

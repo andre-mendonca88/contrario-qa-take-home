@@ -6,8 +6,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm' }
+        with: { node-version: '22', cache: 'npm' }
       - run: npm ci
+      - run: npm run typecheck          # fails fast and legibly, before it can surface inside a test run
       - run: npx prisma db push --force-reset --skip-generate && npx ts-node prisma/seed.ts
       - run: npm run test:api          # fails the build if coverage < threshold
       - run: npx playwright install --with-deps chromium

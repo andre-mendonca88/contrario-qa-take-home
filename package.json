@@ -16,7 +16,8 @@
     "test:api": "jest --config jest.config.js",
     "test:api:watch": "jest --config jest.config.js --watch",
     "test:e2e": "playwright test",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

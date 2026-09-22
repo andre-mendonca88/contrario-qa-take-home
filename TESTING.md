@@ -1,5 +1,67 @@
 # Testing
 
+## Stack, and why
+
+- **API layer: Jest + ts-jest + supertest**, driving the app in-process (see
+  `test/support/app.ts`) rather than against a bound port. `tsconfig.json` is
+  `commonjs` with `emitDecoratorMetadata`, which Nest's DI graph needs to
+  resolve constructor types at runtime; Vitest's esbuild transform doesn't
+  emit that metadata without an extra SWC plugin, so it would have meant
+  fighting the toolchain instead of testing the app.
+- **E2E layer: Playwright**, against the real form at `/`, because that is
+  the one place a browser is actually needed — the API layer cannot click a
+  `<select>` or read `#result` off the DOM.
+- **Unit layer: Jest, no Nest bootstrap** — `test/unit/cascade.service.spec.ts`
+  instantiates `CascadeService` directly against a mocked Prisma client, for
+  the handful of branches no HTTP call can reach (see below).
+
+## Why the suites run serially
+
+Both `jest.config.js` (`maxWorkers: 1`) and `playwright.config.ts`
+(`workers: 1`, `fullyParallel: false`) run everything in one worker. This is a
+correctness requirement, not a performance trade-off: the app has exactly one
+SQLite file and one module-global `RecorderService.seq` counter, both wiped by
+`POST /test/reset`. Under parallel workers, one test's reset truncates another
+test's fixtures mid-run and recorder assertions read a different test's side
+effects — both intermittent, both expensive to debug. Every spec resets in
+`beforeEach`, never `beforeAll`, for the same reason at the test level: the
+bypass quota decrements, the collision rule remembers prior submissions, and
+the recorder accumulates, so a test that inherited a prior test's state would
+pass or fail depending on file order.
+
+## The test pyramid
+
+- **API (52 tests, `test/api/**`)** carries the actual specification —
+  authorization gates, validation, persistence/collision, the auto-approve
+  cascade, and the test-support seam itself. This is where the ladder of
+  authorization rules lives, so it is where almost all the assertions are.
+- **Unit (4 tests, `test/unit/**`)** exists for exactly the branches the API
+  layer structurally cannot reach — not a general-purpose second copy of the
+  API suite.
+- **E2E (3 tests, `test/e2e/**`)** is deliberately thin: happy path, one
+  rejection, one collision. Its job is to prove the static form is wired to
+  the real API, not to re-verify business rules already asserted, more
+  cheaply and precisely, at the API layer.
+
+Heavy at the bottom, thin at the top, on purpose.
+
+## Coverage as a gate, not a number
+
+`jest.config.js` sets `collectCoverage: true` with `coverageThreshold` values
+that **fail the run**, not just report a percentage — an unenforced coverage
+number is a vanity metric. Branch coverage is the one that matters most for
+this codebase specifically: the flow under test is a ladder of authorization
+gates, so an uncovered branch is, almost by definition, an untested rule. The
+one deliberate departure from a single "85% everywhere" bar is explained in
+full below.
+
+## Traceability
+
+Every `describe` block in `test/api/**` and `test/unit/**` is headed by a
+comment naming the `.feature` file it implements (`features/*.feature`), so a
+reviewer can go from a Gherkin scenario to the test that proves it, or from a
+failing test back to the behaviour it was written against.
+
 ## Why the branch threshold is 75 and the others are 95
 
 **Achieved figures** (`npm run test:api`, `coverage/coverage-summary.json`):
@@ -91,3 +153,43 @@ known to undercount by a fixed, explained amount — not a lowering of the bar t
 make a failing number pass. The branches that are actually reachable and
 actually matter (the authorization ladder in `submission-creation.service.ts`,
 and the three real cascade branches above) are held to 90%+ and are covered.
+
+## What is not covered, and why
+
+Observations from reading the source, not defects — the README states there
+are no planted bugs. Naming them here shows the source was actually read, not
+just the happy paths.
+
+- **Two `CascadeService` branches looked unreachable through the public API at
+  first** — `blockedReason: 'inactive_job'` needs a job that is active at
+  submission time (step 4a requires this) but inactive by the time the cascade
+  reads it back; `blockedReason: 'duplicate_in_ats'` needs a second submission
+  sharing an email + job, which the step-5 collision check already rejects
+  with a 409 before it can exist. Both are resolved, not left as gaps: they
+  are covered by `test/unit/cascade.service.spec.ts` against a mocked Prisma
+  client, which is the correct tool for state the real flow can never produce.
+- **A 403 or a résumé-guard 400 still creates a `RecruiterCandidate` row**,
+  because candidate resolution (step 2) runs before the authorization gates
+  (step 4). This is covered as documented behaviour in `validation.spec.ts`,
+  not treated as a defect.
+- **The bypass-quota decrement sits outside the persistence transaction**
+  (`submission-creation.service.ts`, after the `$transaction` block), so a
+  failure there would leave a submission with an un-spent quota. Not covered:
+  reaching it needs fault injection at the Prisma layer, which no test in this
+  suite does.
+- **Exclusivity-window boundaries are not tested.** The seed fixes
+  `job_exclusive`'s window at process start, and the API exposes no way to
+  move it. Testing the exact boundary would need a seed parameter or clock
+  control, neither of which exists today.
+- **Transaction rollback (step 6) is untested** — proving the profile insert
+  rolls back when the submission insert fails needs fault injection at the
+  Prisma layer, which is out of scope for HTTP-level and the current
+  Prisma-mock-based unit tests alike.
+- **One cascade combination is left as `it.todo` in `cascade.spec.ts`**: an
+  auto-approve recruiter on a non-Kombo job (Slack intro fires, Kombo push does
+  not, since that branch is gated on `job.source === 'kombo'`). No seeded user
+  combines `autoApprove` with access to a non-Kombo job —
+  `u_recruiter_autoapprove` only has direct access to `job_kombo` — so forcing
+  it through an unrelated user (e.g. spending bypass quota on `job_active`)
+  would test the bypass path instead of this one. Reaching it cleanly would
+  need either a seed change or a new fixture user.
